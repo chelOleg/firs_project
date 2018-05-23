@@ -3,10 +3,6 @@ from jim.utils import send_message, get_message
 from jim.config import *
 import time
 
-import logging
-import log.client_log_config
-from log.decorators import Log
-
 from jim.core import JimPresence, JimMessage, Jim, JimResponse, JimDelContact, JimAddContact, JimContactList,\
     JimGetContacts, JimRandomKey, JimGetPassw, JimPicture, JimProfileUpdate, JimGetProfile, JimGetStory
 
@@ -17,12 +13,9 @@ import hmac
 
 from queue import Queue
 
-from проект.Filter_pack import set_bits
 
 
 class Client:
-    logger = logging.getLogger('client')
-    log = Log(logger)
 
     def __init__(self, sock,login='guest',password=None):
         self.login = login
@@ -30,7 +23,6 @@ class Client:
         self.password = password
         self.contacts = []
         self.request_queue = Queue()
-
     """Модули для интерфейса"""
     def get_contacts(self):
         jimmessage = JimGetContacts(self.login)
@@ -53,7 +45,7 @@ class Client:
         response = self.request_queue.get()
         print(response)
         return response
-    @log
+
     def send_mes(self,to,text):
         message = JimMessage(to, self.login, text)
         send_message(self.sock, message.to_dict())
@@ -83,15 +75,15 @@ class Client:
         message = JimGetProfile(self.login,name)
         send_message(self.sock,message.to_dict())
 
-    @Log
     def get_story(self,name):
         message = JimGetStory(self.login, name)
         send_message(self.sock, message.to_dict())
         print(message.to_dict())
 
     """Модули для терминала"""
-    @log
+
     def create_presence(self):
+        # Сообщение имени
         jim_presence = JimPresence(self.login, self.password)
         messege = jim_presence.to_dict()
         return messege
@@ -101,12 +93,18 @@ class Client:
         messege = jim_passw.to_dict()
         return  messege
 
-    @log
     def translate_response(self, response):
+        """
+        Разбор сообщения
+        :param response: Словарь ответа от сервера
+        :return: корректный словарь ответа
+        """
         result = Jim.from_dict(response)
+        # возвращаем от
         return result.to_dict()
 
     def create_message(self, message_to, text):
+        #Сообщение кому то
         message = JimMessage(message_to, self.login, text)
         return message.to_dict()
 
@@ -143,8 +141,8 @@ class Client:
                      print(messege.to_dict())
                      send_message(service,messege.to_dict())
 
-    @log
     def create_person(self):
+
         while True:
             login= input('login')
             passw = input('passw')
@@ -156,7 +154,6 @@ class Client:
             else:
                 print('Incorrect passsword')
 
-    @log
     def send_person(self):
         while True:
             self.create_person()
@@ -198,7 +195,6 @@ class Client:
         digest = hash.digest()
         return digest
 
-    @log
     def start(self):
         run = input('Войти или содать in/cr')
         if run == 'cr':
@@ -217,4 +213,5 @@ class Client:
 
         writer.start()
         listener.start()
+
 

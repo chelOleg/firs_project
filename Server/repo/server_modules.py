@@ -35,6 +35,7 @@ class Handler:
 
     @log
     def presence_response(self, sock, presence_message):
+        print(presence_message)
         presence = Jim.from_dict(presence_message)
         ok = JimResponse(OK)
         error = JimResponse(ACCOUNT_ERROR)
@@ -78,6 +79,7 @@ class Handler:
     def write_responses(self, requests, names, clients):
         for message, sock in requests:
             try:
+                print(message)
                 action = Jim.from_dict(message)
                 if action.action == GET_CONTACTS:
                     contacts = self.repo.get_contacts(action.account_name)
@@ -138,9 +140,9 @@ class Handler:
                         self.set_text(text)
 
                 elif action.action == GET_STORYES:
+                    name = action.account_name
                     if self.story_base:
                         try:
-                            name = action.account_name
                             friend_name = action.user_id
                             if friend_name == MSG:
                                 for story in self.mrepo.get_histories(friend_name):
@@ -156,18 +158,23 @@ class Handler:
                             self.story_base = False
                             self.set_error(e)
                             self.set_text(text)
+                    else:
+                        message = JimMessage(name,'server','story base offline')
+                        send_message(sock,message.to_dict())
 
                 elif action.action == MSG:
                     if action.to == MSG:
                         for client in clients:
                             send_message(client, action.to_dict())
-                            self.add_story(action.to_dict())
+                            if self.story_base:
+                                self.add_story(action.to_dict())
                     else:
                         try:
                             to = action.to
                             client_sock = names[to]
                             send_message(client_sock, action.to_dict())
-                            self.add_story(action.to_dict())
+                            if self.story_base:
+                                self.add_story(action.to_dict())
                         except:
                             to = action.from_
                             from_ = 'server'
@@ -217,9 +224,9 @@ class Handler:
             self.set_text(text)
 
     @log
-    async def read_requests(self, clients):
+    async def read_requests(self, writers, clients):
         responses = []
-        for sock in clients:
+        for sock in writers:
             try:
                 messege = get_message(sock)
                 responses.append((messege, sock))
@@ -247,7 +254,6 @@ class Server:
         self.name = name
         self.handler = handler
         self.server = socket(AF_INET, SOCK_STREAM)
-        self.wait_connection =[]
         self.clients = []
         self.names = {}
 
@@ -263,26 +269,26 @@ class Server:
             except:
                 return ERROR
 
-    def getting_clients(self, window = None):
-        try:
-            client, addr = self.server.accept()
-            client_name = self.connection(client)
-            if client_name == ERROR:
-                raise OSError
-
-        except OSError as e:
-            pass
-        else:
-            self.clients.append(client)
-            self.names[client_name] = client
-            text ='Подключение {}'.format(client_name)
-            self.handler.set_text(text)
+    # def getting_clients(self, window = None):
+    #     try:
+    #         client, addr = self.server.accept()
+    #         print(client)
+    #         client_name = self.connection(client)
+    #         if client_name == ERROR:
+    #             raise OSError
+    #
+    #     except OSError as e:
+    #         pass
+    #     else:
+    #         self.clients.append(client)
+    #         self.names[client_name] = client
+    #         text ='Подключение {}'.format(client_name)
+    #         self.handler.set_text(text)
 
     async def listen(self):
         while True:
             try:
                 client, addr = self.server.accept()
-                # подкллючаем
                 client_name = await self.connection(client)
                 if client_name == ERROR:
                     raise OSError
@@ -295,7 +301,14 @@ class Server:
                 text = 'Подключение {}'.format(client_name)
                 self.handler.set_text(text)
             finally:
-                requests = await self.handler.read_requests(self.clients)
+                wait = 0
+                w = []
+                r = []
+                try:
+                    w, r, e = select.select(self.clients, self.clients, [], wait)
+                except:
+                    pass
+                requests = await self.handler.read_requests(w, self.clients)
                 self.handler.write_responses(requests,self.names, self.clients)
 
     @Log
@@ -312,7 +325,7 @@ class Server:
         text ='{} работает'.format(self.name)
         self.handler.set_text(text)
         # qt disainer не работает с асинхронными потоками
-        eloop = asyncio.get_event_loop()
+        eloop =asyncio.get_event_loop()
         eloop.run_until_complete(self.listen())
 
 
