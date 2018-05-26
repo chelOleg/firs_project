@@ -2,6 +2,9 @@ import select
 import sys
 import os
 import time
+import hmac
+import json
+
 from socket import socket, AF_INET, SOCK_STREAM
 
 from jim.utils import send_message, get_message, adres
@@ -16,9 +19,7 @@ from log.decorators import Log
 from repo.base import session, msession
 from repo.base_core import Repo, MongoRepo
 
-import hmac
-import json
-
+from PyQt5.QtCore import QObject, QThread
 import asyncio
 
 logger = logging.getLogger('server')
@@ -32,34 +33,12 @@ class Handler:
         self.mrepo = MongoRepo(msession)
         self.window = window
         self.story_base = True
+        self.new_client =[]
+
 
     @log
     def presence_response(self, sock, presence_message):
-        print(presence_message)
-        presence = Jim.from_dict(presence_message)
-        ok = JimResponse(OK)
-        error = JimResponse(ACCOUNT_ERROR)
-        try:
-            username = presence.account_name
-            if presence.action == PRESENCE:
-                passw = presence.account_passw
-                if not self.repo.client_exists(username):
-                    self.repo.add_client(username, passw)
-                    response = ok
-                else:
-                    response = error
-            elif presence.action == GET_PASSW:
-                if self.repo.client_exists(username):
-                    send_message(sock,ok.to_dict())
-                    not_passw = self.repo.get_passw(username)
-                    resp = self.log_in(sock, not_passw)
-                    response = JimResponse(resp)
-                else:
-                    response = error
-        except Exception as e:
-            response = JimResponse(WRONG_REQUEST, error=str(e))
-        finally:
-            return response.to_dict(), username
+        pass
 
     def log_in(self, client, not_passw):
         messege = os.urandom(32)
@@ -79,7 +58,6 @@ class Handler:
     def write_responses(self, requests, names, clients):
         for message, sock in requests:
             try:
-                print(message)
                 action = Jim.from_dict(message)
                 if action.action == GET_CONTACTS:
                     contacts = self.repo.get_contacts(action.account_name)
@@ -197,6 +175,32 @@ class Handler:
                         mes = JimResponse(USER_OFFLINE)
                         send_message(sock, mes.to_dict())
 
+                elif action.action == PRESENCE:
+                    username = action.account_name
+                    passw = action.account_passw
+                    if not self.repo.client_exists(username):
+                        self.repo.add_client(username, passw)
+                        new_client = (sock,username)
+                        self.new_client.append(new_client)
+                        response = JimResponse(OK)
+                    else:
+                        response = JimResponse(ACCOUNT_ERROR)
+                    send_message(sock,response.to_dict())
+                elif action.action == GET_PASSW:
+                    username = action.account_name
+                    if self.repo.client_exists(username):
+                        response = JimResponse(OK)
+                        send_message(sock, response.to_dict())
+                        not_passw = self.repo.get_passw(username)
+                        resp = self.log_in(sock, not_passw)
+                        response = JimResponse(resp)
+                        if resp == OK:
+                            new_client = (sock, username)
+                            self.new_client.append(new_client)
+                    else:
+                        response = JimResponse(ACCOUNT_ERROR)
+                    send_message(sock,response.to_dict())
+
             except WrongInputError as e:
                 response = JimResponse(WRONG_REQUEST, error=str(e))
                 send_message(sock, response.to_dict())
@@ -257,49 +261,14 @@ class Server:
         self.clients = []
         self.names = {}
 
-    @log
-    async def connection(self,client):
-        while True:
-            try:
-                presence = get_message(client)
-                response, client_name = self.handler.presence_response(client, presence)
-                send_message(client, response)
-                if response[RESPONSE] == OK:
-                    return client_name
-            except:
-                return ERROR
-
-    # def getting_clients(self, window = None):
-    #     try:
-    #         client, addr = self.server.accept()
-    #         print(client)
-    #         client_name = self.connection(client)
-    #         if client_name == ERROR:
-    #             raise OSError
-    #
-    #     except OSError as e:
-    #         pass
-    #     else:
-    #         self.clients.append(client)
-    #         self.names[client_name] = client
-    #         text ='Подключение {}'.format(client_name)
-    #         self.handler.set_text(text)
-
     async def listen(self):
         while True:
             try:
                 client, addr = self.server.accept()
-                client_name = await self.connection(client)
-                if client_name == ERROR:
-                    raise OSError
-
             except OSError as e:
                 pass
             else:
                 self.clients.append(client)
-                self.names[client_name] = client
-                text = 'Подключение {}'.format(client_name)
-                self.handler.set_text(text)
             finally:
                 wait = 0
                 w = []
@@ -310,11 +279,24 @@ class Server:
                     pass
                 requests = await self.handler.read_requests(w, self.clients)
                 self.handler.write_responses(requests,self.names, self.clients)
+                self.update_names()
 
     @Log
     def drop_story_base(self):
         text = self.handler.mrepo.delete_histories()
         self.handler.set_text(text)
+
+    def update_names(self):
+        try:
+            new_client = self.handler.new_client.pop()# 'socket' object is not iterable
+            sock = new_client[0]
+            name = new_client[1]
+            self.names[name] = sock
+            text = 'Подключение {}'.format(name)
+            self.handler.set_text(text)
+        except Exception as e:
+            pass
+
 
     @log
     def start(self):
@@ -327,6 +309,4 @@ class Server:
         # qt disainer не работает с асинхронными потоками
         eloop =asyncio.get_event_loop()
         eloop.run_until_complete(self.listen())
-
-
 
